@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useRef, Children, isValidElement } from 'react';
 import ReactMarkdown from 'react-markdown';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 import remarkGfm from 'remark-gfm';
 import {
   ResponsiveContainer,
@@ -274,6 +276,83 @@ function findBestMetric(metrics: string[], question: string): string {
   return metrics[0] ?? '';
 }
 
+interface ClickedPoint {
+  company: string;
+  metric: string;
+  period: string;
+  value: number;
+  cx: number;
+  cy: number;
+  chartTop: number;
+}
+
+function DataPointPopover({ point, onClose }: { point: ClickedPoint; onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [loading, setLoading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const handleAsk = () => {
+    if (!query.trim() || loading) return;
+    setLoading(true);
+    setAnswer('');
+    const context = `Answer in 2-3 short sentences, no tables or headers. Regarding ${point.company}'s ${point.metric} in ${point.period} (value: ${formatValue(point.value)}): ${query}`;
+    fetch(`${API_URL}/ask?question=${encodeURIComponent(context)}`)
+      .then(r => r.json())
+      .then(data => {
+        setAnswer(data.answer ?? data.error ?? 'No answer found.');
+        setLoading(false);
+      })
+      .catch(() => {
+        setAnswer('Could not reach the server.');
+        setLoading(false);
+      });
+  };
+
+  return (
+    <div ref={ref} className="absolute z-50 bg-white rounded-2xl shadow-xl border border-black/10 p-4 w-80"
+      style={{ left: Math.min(point.cx, 320), top: point.cy + point.chartTop - 8, transform: 'translate(-50%, -100%)' }}>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <p className="text-[11px] font-semibold tracking-wider uppercase text-black/50">{point.company} · {point.period}</p>
+          <p className="text-lg font-bold">{formatValue(point.value)}</p>
+        </div>
+        <button onClick={onClose} className="text-black/30 hover:text-black/60 text-lg leading-none">×</button>
+      </div>
+      <p className="text-[10px] text-black/30 uppercase tracking-widest mb-1.5">{point.metric}</p>
+      <div className="flex gap-1.5">
+        <input
+          type="text" value={query} onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleAsk()}
+          placeholder="Ask about this data point..."
+          className="flex-1 text-xs px-3 py-2 rounded-xl border border-black/10 outline-none focus:border-black/30 bg-black/[0.02]"
+          autoFocus
+        />
+        <button onClick={handleAsk} disabled={loading}
+          className="text-[10px] font-semibold tracking-wider uppercase px-3 py-2 rounded-xl bg-black text-white hover:bg-black/80 disabled:opacity-40 transition-colors">
+          {loading ? '...' : 'Ask'}
+        </button>
+      </div>
+      {loading && !answer && (
+        <p className="mt-3 text-xs text-black/40 italic animate-pulse">Searching filings...</p>
+      )}
+      {answer && (
+        <div className="mt-3 text-xs text-black/70 leading-relaxed max-h-48 overflow-y-auto border-t border-black/5 pt-2 prose prose-xs">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function sortTimeKeys(a: string, b: string) {
   const qMatch = /^Q(\d)\s+(\d{4})$/;
   const aM = a.match(qMatch);
@@ -311,8 +390,7 @@ function buildGrowth(points: Record<string, string | number>[], companyKey: stri
   }).filter(p => p.growth !== null);
 }
 
-const ANNUAL_ZOOM = [{ label: '3Y', count: 3 }, { label: '5Y', count: 5 }, { label: '10Y', count: 10 }, { label: 'All', count: Infinity }];
-const QUARTERLY_ZOOM = [{ label: '2Y', count: 8 }, { label: '5Y', count: 20 }, { label: '10Y', count: 40 }, { label: 'All', count: Infinity }];
+const ZOOM_OPTIONS = [{ label: '3Y', annual: 3, quarterly: 12 }, { label: '5Y', annual: 5, quarterly: 20 }, { label: '10Y', annual: 10, quarterly: 40 }];
 
 function formatValue(v: number) {
   if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -321,12 +399,13 @@ function formatValue(v: number) {
   return v.toLocaleString();
 }
 
-function ValuePanel({ points, datasets, gradId, height = 'h-44' }: { points: Record<string, string | number>[]; datasets: FinancialChartData[]; gradId: string; height?: string }) {
+function ValuePanel({ points, datasets, gradId, height = 'h-44', onDotClick }: { points: Record<string, string | number>[]; datasets: FinancialChartData[]; gradId: string; height?: string; onDotClick?: (company: string, period: string, value: number, cx: number, cy: number) => void }) {
   const allValues = points.flatMap(p => Object.entries(p).filter(([k]) => k !== 'year').map(([, v]) => v as number));
   const minVal = Math.min(...allValues);
   const maxVal = Math.max(...allValues);
+  const wrapRef = useRef<HTMLDivElement>(null);
   return (
-    <div className={height}>
+    <div className={height} ref={wrapRef}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={points} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
           <defs>
@@ -342,7 +421,18 @@ function ValuePanel({ points, datasets, gradId, height = 'h-44' }: { points: Rec
           <YAxis domain={[Math.min(0, minVal * 0.9), maxVal * 1.1]} tickFormatter={formatValue} tick={{ fontSize: 10, fill: 'rgba(0,0,0,0.3)', fontFamily: 'inherit' }} axisLine={false} tickLine={false} width={50} tickCount={4} />
           <Tooltip formatter={(value: unknown, name: unknown) => [formatValue(value as number), String(name)]} contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 12, fontSize: 12 }} />
           {datasets.map((d, i) => (
-            <Area key={d.company} type="monotone" dataKey={d.company} stroke={METRIC_COLORS[i % METRIC_COLORS.length]} strokeWidth={2} fill={`url(#${gradId}-${i})`} dot={{ r: 2.5, fill: METRIC_COLORS[i % METRIC_COLORS.length], strokeWidth: 0 }} activeDot={{ r: 4 }} />
+            <Area key={d.company} type="monotone" dataKey={d.company} stroke={METRIC_COLORS[i % METRIC_COLORS.length]} strokeWidth={2} fill={`url(#${gradId}-${i})`}
+              dot={{ r: 2.5, fill: METRIC_COLORS[i % METRIC_COLORS.length], strokeWidth: 0, cursor: onDotClick ? 'pointer' : 'default' }}
+              activeDot={{
+                r: 6, strokeWidth: 2, stroke: METRIC_COLORS[i % METRIC_COLORS.length], fill: '#fff', cursor: 'pointer',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                onClick: onDotClick ? (e: any, payload: any) => {
+                  const period = String(payload?.payload?.year ?? '');
+                  const value = (payload?.payload?.[d.company] as number) ?? 0;
+                  onDotClick(d.company, period, value, payload?.cx ?? 0, payload?.cy ?? 0);
+                } : undefined,
+              }}
+            />
           ))}
         </AreaChart>
       </ResponsiveContainer>
@@ -351,13 +441,15 @@ function ValuePanel({ points, datasets, gradId, height = 'h-44' }: { points: Rec
 }
 
 function GrowthPanel({ points, barSize = 20 }: { points: { year: string; growth: number | null }[]; barSize?: number }) {
+  const maxAbs = Math.min(100, Math.max(10, ...points.map(p => Math.abs(p.growth ?? 0))));
+  const bound = Math.ceil(maxAbs / 10) * 10;
   return (
     <div className="h-24">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={points} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
           <CartesianGrid vertical={false} stroke="rgba(0,0,0,0.05)" />
           <XAxis dataKey="year" tick={{ fontSize: 9, fill: 'rgba(0,0,0,0.25)', fontFamily: 'inherit' }} axisLine={false} tickLine={false} minTickGap={40} />
-          <YAxis tickFormatter={v => `${v.toFixed(0)}%`} tick={{ fontSize: 9, fill: 'rgba(0,0,0,0.25)', fontFamily: 'inherit' }} axisLine={false} tickLine={false} width={36} tickCount={3} />
+          <YAxis domain={[-bound, bound]} allowDataOverflow tickFormatter={v => `${v.toFixed(0)}%`} tick={{ fontSize: 9, fill: 'rgba(0,0,0,0.25)', fontFamily: 'inherit' }} axisLine={false} tickLine={false} width={36} tickCount={3} />
           <ReferenceLine y={0} stroke="rgba(0,0,0,0.15)" />
           <Tooltip formatter={(value: unknown) => [`${(value as number).toFixed(1)}%`, 'Growth']} contentStyle={{ backgroundColor: 'rgba(255,255,255,0.95)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 12, fontSize: 12 }} />
           <Bar dataKey="growth" radius={[3, 3, 0, 0]} maxBarSize={barSize}>
@@ -384,34 +476,57 @@ function FinancialChart({ data }: { data: FinancialChartPayload }) {
   const question = annualData[0]?.question ?? quarterlyData[0]?.question ?? '';
 
   const [selectedMetric, setSelectedMetric] = useState(() => findBestMetric(metricList, question));
-  const [annualZoom, setAnnualZoom] = useState('All');
-  const [quarterlyZoom, setQuarterlyZoom] = useState('All');
+  const [zoom, setZoom] = useState('10Y');
 
   const annualPoints = buildPoints(annualData, selectedMetric);
   const quarterlyPoints = buildPoints(quarterlyData, selectedMetric);
 
-  const annualZoomCount = ANNUAL_ZOOM.find(z => z.label === annualZoom)?.count ?? Infinity;
-  const quarterlyZoomCount = QUARTERLY_ZOOM.find(z => z.label === quarterlyZoom)?.count ?? Infinity;
-  const visibleAnnual = annualZoomCount === Infinity ? annualPoints : annualPoints.slice(-annualZoomCount);
-  const visibleQuarterly = quarterlyZoomCount === Infinity ? quarterlyPoints : quarterlyPoints.slice(-quarterlyZoomCount);
+  const zoomOption = ZOOM_OPTIONS.find(z => z.label === zoom) ?? ZOOM_OPTIONS[2];
+  const visibleAnnual = annualPoints.slice(-zoomOption.annual);
+  const visibleQuarterly = quarterlyPoints.slice(-zoomOption.quarterly);
 
   const annualCompany = annualData[0]?.company ?? '';
   const quarterlyCompany = quarterlyData[0]?.company ?? '';
-  const annualGrowth = buildGrowth(visibleAnnual, annualCompany);
-  const quarterlyGrowth = buildGrowth(visibleQuarterly, quarterlyCompany);
+  const annualForGrowth = annualPoints.slice(-(zoomOption.annual + 1));
+  const quarterlyForGrowth = quarterlyPoints.slice(-(zoomOption.quarterly + 1));
+  const annualGrowth = buildGrowth(annualForGrowth, annualCompany);
+  const quarterlyGrowth = buildGrowth(quarterlyForGrowth, quarterlyCompany);
+
+  const [clickedPoint, setClickedPoint] = useState<ClickedPoint | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleDotClick = (company: string, period: string, value: number, cx: number, cy: number, sectionRef: React.RefObject<HTMLDivElement | null>) => {
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    const sectionRect = sectionRef.current?.getBoundingClientRect();
+    if (!containerRect || !sectionRect) return;
+    setClickedPoint({ company, metric: selectedMetric, period, value, cx, cy, chartTop: sectionRect.top - containerRect.top });
+  };
+
+  const annualRef = useRef<HTMLDivElement>(null);
+  const quarterlyRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div>
-      {metricList.length > 1 && (
-        <div className="flex flex-wrap gap-2 mb-5">
-          {metricList.map(m => (
-            <button key={m} onClick={() => setSelectedMetric(m)}
-              className={`text-[10px] font-semibold tracking-wider uppercase px-3 py-1.5 rounded-full transition-colors ${
-                selectedMetric === m ? 'bg-black text-white' : 'text-black/35 hover:text-black/60 border border-black/10'
-              }`}>{m}</button>
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+        {metricList.length > 1 && (
+          <div className="flex flex-wrap gap-2">
+            {metricList.map(m => (
+              <button key={m} onClick={() => setSelectedMetric(m)}
+                className={`text-[10px] font-semibold tracking-wider uppercase px-3 py-1.5 rounded-full transition-colors ${
+                  selectedMetric === m ? 'bg-black text-white' : 'text-black/35 hover:text-black/60 border border-black/10'
+                }`}>{m}</button>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-1">
+          {ZOOM_OPTIONS.map(z => (
+            <button key={z.label} onClick={() => setZoom(z.label)}
+              className={`text-[10px] font-semibold tracking-widest uppercase px-2.5 py-1 rounded-full transition-colors ${
+                zoom === z.label ? 'bg-black text-white' : 'text-black/30 hover:text-black/50'
+              }`}>{z.label}</button>
           ))}
         </div>
-      )}
+      </div>
 
       <div className="flex items-center gap-4 mb-5">
         {(annualData.length ? annualData : quarterlyData).map((d, i) => (
@@ -422,21 +537,13 @@ function FinancialChart({ data }: { data: FinancialChartPayload }) {
         ))}
       </div>
 
+      {clickedPoint && <DataPointPopover point={clickedPoint} onClose={() => setClickedPoint(null)} />}
+
       {/* Panel 1: Annual */}
       {hasAnnual && visibleAnnual.length > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] text-black/40 tracking-widest uppercase font-semibold">Annual</p>
-            <div className="flex gap-1">
-              {ANNUAL_ZOOM.map(z => (
-                <button key={z.label} onClick={() => setAnnualZoom(z.label)}
-                  className={`text-[9px] font-semibold tracking-widest uppercase px-2 py-0.5 rounded-full transition-colors ${
-                    annualZoom === z.label ? 'bg-black text-white' : 'text-black/30 hover:text-black/50'
-                  }`}>{z.label}</button>
-              ))}
-            </div>
-          </div>
-          <ValuePanel points={visibleAnnual} datasets={annualData} gradId="annGrad" />
+        <div className="mb-6" ref={annualRef}>
+          <p className="text-[10px] text-black/40 tracking-widest uppercase font-semibold mb-2">Annual</p>
+          <ValuePanel points={visibleAnnual} datasets={annualData} gradId="annGrad" onDotClick={(company, period, value, cx, cy) => handleDotClick(company, period, value, cx, cy, annualRef)} />
           {annualGrowth.length > 1 && (
             <>
               <p className="text-[10px] text-black/25 tracking-widest uppercase mt-3 mb-1">YoY Growth</p>
@@ -448,19 +555,9 @@ function FinancialChart({ data }: { data: FinancialChartPayload }) {
 
       {/* Panel 2: Quarterly */}
       {hasQuarterly && visibleQuarterly.length > 0 && (
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] text-black/40 tracking-widest uppercase font-semibold">Quarterly</p>
-            <div className="flex gap-1">
-              {QUARTERLY_ZOOM.map(z => (
-                <button key={z.label} onClick={() => setQuarterlyZoom(z.label)}
-                  className={`text-[9px] font-semibold tracking-widest uppercase px-2 py-0.5 rounded-full transition-colors ${
-                    quarterlyZoom === z.label ? 'bg-black text-white' : 'text-black/30 hover:text-black/50'
-                  }`}>{z.label}</button>
-              ))}
-            </div>
-          </div>
-          <ValuePanel points={visibleQuarterly} datasets={quarterlyData} gradId="qtrGrad" />
+        <div className="mb-4" ref={quarterlyRef}>
+          <p className="text-[10px] text-black/40 tracking-widest uppercase font-semibold mb-2">Quarterly</p>
+          <ValuePanel points={visibleQuarterly} datasets={quarterlyData} gradId="qtrGrad" onDotClick={(company, period, value, cx, cy) => handleDotClick(company, period, value, cx, cy, quarterlyRef)} />
           {quarterlyGrowth.length > 1 && (
             <>
               <p className="text-[10px] text-black/25 tracking-widest uppercase mt-3 mb-1">QoQ Growth</p>
@@ -470,7 +567,8 @@ function FinancialChart({ data }: { data: FinancialChartPayload }) {
         </div>
       )}
 
-      <p className="text-[10px] text-black/20 tracking-widest uppercase mt-2">Source: SEC EDGAR 10-K & 10-Q Filings</p>
+      <p className="text-[10px] text-black/20 tracking-widest uppercase mt-2">Source: SEC EDGAR 10-K & 10-Q Filings · Split-Adjusted</p>
+      <p className="text-[10px] text-black/15 italic mt-1">Q4 unavailable for some years due to stock split adjustments</p>
     </div>
   );
 }
@@ -501,7 +599,7 @@ export default function Home() {
     setChartData(null);
     setFinancialChart(null);
     setActiveTab('chart');
-    fetch(`http://localhost:8000/ask?question=${encodeURIComponent(q)}`)
+    fetch(`${API_URL}/ask?question=${encodeURIComponent(q)}`)
       .then(r => r.json())
       .then(data => {
         if (data.error) {
@@ -585,9 +683,10 @@ export default function Home() {
 
       {/* Header */}
       <header className="px-10 pt-7 pb-5 flex items-center justify-between border-b border-black/[0.06]">
-        <span className="text-[11px] font-semibold tracking-[0.25em] text-black uppercase">
-          EDGAR Intelligence
-        </span>
+        <button onClick={() => { setQuestion(''); questionRef.current = ''; setAnswer(''); setChartData(null); setFinancialChart(null); setError(''); }}
+          className="text-[11px] font-semibold tracking-[0.25em] text-black uppercase hover:text-black/60 transition-colors">
+          FinSight
+        </button>
         <span className="text-[11px] text-black/30 tracking-widest tabular-nums">
           {today}
         </span>
@@ -600,10 +699,10 @@ export default function Home() {
           {/* Headline */}
           <div className="mb-8">
             <h1 className="font-serif text-[2.2rem] font-normal italic text-black leading-tight tracking-tight mb-2.5">
-              Ask the filings.
+              Ask the markets.
             </h1>
             <p className="text-sm text-black/40 tracking-wide">
-              Natural language research across SEC EDGAR disclosures.
+              AI-powered financial research and analysis.
             </p>
           </div>
 
@@ -637,6 +736,23 @@ export default function Home() {
               </span>
             )}
           </div>
+
+          {/* Example questions */}
+          {!answer && !chartData && !financialChart && !loading && (
+            <div className="mt-6 flex flex-wrap gap-2">
+              {[
+                "Show me Apple's earnings per share history",
+                "Compare Apple and Microsoft stock prices over 5 years",
+                "What are Tesla's key risk factors?",
+                "What is Nvidia's P/E ratio?",
+              ].map(q => (
+                <button key={q} onClick={() => { setQuestion(q); questionRef.current = q; }}
+                  className="text-[11px] text-black/35 hover:text-black/60 border border-black/10 hover:border-black/25 rounded-full px-3.5 py-1.5 transition-colors tracking-wide">
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Tabbed answer panel */}
           {(answer || chartData || financialChart) && !loading && (
@@ -761,7 +877,7 @@ export default function Home() {
       <footer className="px-10 pb-8">
         <div className="max-w-xl mx-auto">
           <p className="text-[10px] text-black/25 tracking-[0.2em] uppercase">
-            SEC EDGAR
+            FinSight
           </p>
         </div>
       </footer>

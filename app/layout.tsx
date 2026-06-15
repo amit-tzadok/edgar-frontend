@@ -14,8 +14,8 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "EDGAR RAG",
-  description: "AI-powered SEC filing research for financial professionals",
+  title: "FinSight",
+  description: "AI-powered financial research and analysis",
 };
 
 export default function RootLayout({
