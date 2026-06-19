@@ -312,7 +312,7 @@ function DataPointPopover({ point, onClose }: { point: ClickedPoint; onClose: ()
         setLoading(false);
       })
       .catch(() => {
-        setAnswer('Could not reach the server.');
+        setAnswer('Server is temporarily unavailable. Please try again in a moment.');
         setLoading(false);
       });
   };
@@ -338,11 +338,11 @@ function DataPointPopover({ point, onClose }: { point: ClickedPoint; onClose: ()
         />
         <button onClick={handleAsk} disabled={loading}
           className="text-[10px] font-semibold tracking-wider uppercase px-3 py-2 rounded-xl bg-black text-white hover:bg-black/80 disabled:opacity-40 transition-colors">
-          {loading ? '...' : 'Ask'}
+          {loading ? 'Analyzing...' : 'Ask'}
         </button>
       </div>
       {loading && !answer && (
-        <p className="mt-3 text-xs text-black/40 italic animate-pulse">Searching filings...</p>
+        <p className="mt-3 text-xs text-black/40 italic animate-pulse">Analyzing SEC filings... this may take a moment</p>
       )}
       {answer && (
         <div className="mt-3 text-xs text-black/70 leading-relaxed max-h-48 overflow-y-auto border-t border-black/5 pt-2 prose prose-xs">
@@ -630,7 +630,7 @@ export default function Home() {
       })
       .catch(err => {
         console.error(err);
-        setError('Could not reach the server. Make sure the backend is running on port 8000.');
+        setError('Server is temporarily unavailable. Please try again in a moment.');
         setLoading(false);
         loadingRef.current = false;
       });
