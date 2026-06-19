@@ -492,6 +492,10 @@ function FinancialChart({ data }: { data: FinancialChartPayload }) {
   const annualGrowth = buildGrowth(annualForGrowth, annualCompany);
   const quarterlyGrowth = buildGrowth(quarterlyForGrowth, quarterlyCompany);
 
+  const [showAllMetrics, setShowAllMetrics] = useState(false);
+  const MAX_VISIBLE_METRICS = 6;
+  const sortedMetrics = [selectedMetric, ...metricList.filter(m => m !== selectedMetric)];
+
   const [clickedPoint, setClickedPoint] = useState<ClickedPoint | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -510,12 +514,24 @@ function FinancialChart({ data }: { data: FinancialChartPayload }) {
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         {metricList.length > 1 && (
           <div className="flex flex-wrap gap-2">
-            {metricList.map(m => (
+            {(showAllMetrics ? sortedMetrics : sortedMetrics.slice(0, MAX_VISIBLE_METRICS)).map(m => (
               <button key={m} onClick={() => setSelectedMetric(m)}
                 className={`text-[10px] font-semibold tracking-wider uppercase px-3 py-1.5 rounded-full transition-colors ${
                   selectedMetric === m ? 'bg-black text-white' : 'text-black/35 hover:text-black/60 border border-black/10'
                 }`}>{m}</button>
             ))}
+            {!showAllMetrics && sortedMetrics.length > MAX_VISIBLE_METRICS && (
+              <button onClick={() => setShowAllMetrics(true)}
+                className="text-[10px] font-semibold tracking-wider uppercase px-3 py-1.5 rounded-full transition-colors text-black/35 hover:text-black/60 border border-dashed border-black/20">
+                +{sortedMetrics.length - MAX_VISIBLE_METRICS} more
+              </button>
+            )}
+            {showAllMetrics && sortedMetrics.length > MAX_VISIBLE_METRICS && (
+              <button onClick={() => setShowAllMetrics(false)}
+                className="text-[10px] font-semibold tracking-wider uppercase px-3 py-1.5 rounded-full transition-colors text-black/35 hover:text-black/60 border border-dashed border-black/20">
+                show less
+              </button>
+            )}
           </div>
         )}
         <div className="flex gap-1">
