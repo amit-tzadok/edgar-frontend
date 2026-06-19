@@ -345,8 +345,11 @@ function DataPointPopover({ point, onClose }: { point: ClickedPoint; onClose: ()
         <p className="mt-3 text-xs text-black/40 italic animate-pulse">Analyzing SEC filings... this may take a moment</p>
       )}
       {answer && (
-        <div className="mt-3 text-xs text-black/70 leading-relaxed max-h-48 overflow-y-auto border-t border-black/5 pt-2 prose prose-xs">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+        <div className="mt-4 border-t border-black/10 pt-3">
+          <h4 className="text-[10px] font-semibold tracking-wider uppercase text-black/40 mb-2">Summary</h4>
+          <div className="text-sm text-black/80 leading-relaxed max-h-64 overflow-y-auto prose prose-sm">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+          </div>
         </div>
       )}
     </div>
